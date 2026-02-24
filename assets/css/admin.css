@@ -688,27 +688,33 @@
 }
 
 /* Order List Column Button */
-.sfc-column-risk { display: flex; align-items: center; gap: 10px; }
-.sfc-column-actions { display: flex; align-items: center; gap: 4px; }
+.sfc-column-risk {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
-.sfc-order-refresh-btn,
-.sfc-view-fraud-details {
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-  color: #64748b;
-  cursor: pointer;
+.sfc-view_fraud-details, .sfc-view-fraud-details {
+  background: none;
+  border: 1px solid var(--sfc-border);
+  color: var(--sfc-text-sm);
   padding: 4px;
-  border-radius: 6px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: all 0.2s;
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: all 0.2s;
-  width: 28px;
-  height: 28px;
 }
 
-.sfc-order-refresh-btn:hover,
 .sfc-view-fraud-details:hover {
+  background: var(--sfc-primary);
+  color: #fff;
+  border-color: var(--sfc-primary-d);
+}
+
+.sfc-view-fraud-details .dashicons {
+  font-size: 16px;
   width: 16px;
   height: 16px;
 }

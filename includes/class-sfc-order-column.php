@@ -64,13 +64,12 @@ class SFC_Order_Column {
     private function output_risk_badge( \WC_Order $order ): void {
         if ( 'yes' !== get_option( 'sfc_show_risk_badge', 'yes' ) ) return;
 
-        $risk    = $order->get_meta( '_sfc_risk_level' );
-        $score   = $order->get_meta( '_sfc_risk_score' );
-        $order_id = $order->get_id();
+        $risk  = $order->get_meta( '_sfc_risk_level' );
+        $score = $order->get_meta( '_sfc_risk_score' );
 
         $checker = SFC_Checker::instance();
         
-        echo '<div class="sfc-column-risk" id="sfc-risk-container-' . esc_attr( $order_id ) . '">';
+        echo '<div class="sfc-column-risk">';
 
         if ( empty( $risk ) ) {
             echo '<span class="sfc-badge sfc-badge--unknown" title="' . esc_attr__( 'Not checked yet', 'steadfast-fraud-check' ) . '">';
@@ -84,17 +83,10 @@ class SFC_Order_Column {
             echo '</span>';
         }
         
-        echo '<div class="sfc-column-actions">';
-        echo '<button type="button" class="sfc-order-refresh-btn" data-order-id="' . esc_attr( $order_id ) . '" title="' . esc_attr__( 'Sync / Refresh Risk', 'steadfast-fraud-check' ) . '">';
-        echo '<span class="dashicons dashicons-update"></span>';
-        echo '</button>';
-        
-        echo '<button type="button" class="sfc-view-fraud-details" data-order-id="' . esc_attr( $order_id ) . '" title="' . esc_attr__( 'View Intel Report', 'steadfast-fraud-check' ) . '">';
+        echo '<button type="button" class="sfc-view-fraud-details" data-order-id="' . esc_attr( $order->get_id() ) . '" title="' . esc_attr__( 'View Full Intelligence Report', 'steadfast-fraud-check' ) . '">';
         echo '<span class="dashicons dashicons-external"></span>';
         echo '</button>';
-        echo '</div>'; // .sfc-column-actions
-        
-        echo '</div>'; // .sfc-column-risk
+        echo '</div>';
     }
 
     /* ------------------------------------------------------------------ */
