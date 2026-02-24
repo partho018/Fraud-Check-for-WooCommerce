@@ -22,7 +22,40 @@ class SFC_Checker {
         return self::$instance;
     }
 
-    private function __construct() {}
+    private function __construct() {
+        // Update fraud data when order status changes to capture success/failure signals
+        add_action( 'woocommerce_order_status_changed', [ $this, 'handle_status_change' ], 10, 4 );
+    }
+
+    /**
+     * When an order status changes, we should update the fraud data for this customer
+     * so that the risk level reflects their recent performance (Success/Return).
+     */
+    public function handle_status_change( $order_id, $from, $to, $order ): void {
+        $statuses_of_interest = [ 'completed', 'processing', 'cancelled', 'failed', 'returned' ];
+        
+        if ( in_array( $to, $statuses_of_interest, true ) ) {
+            $phone = $order->get_billing_phone();
+            if ( ! empty( $phone ) ) {
+                $phone_norm = SFC_API::normalize_phone( $phone );
+                
+                // 1. Clear cache to force a fresh look at local history
+                $this->clear_phone_cache( $phone_norm );
+                
+                // 2. Re-calculate and update meta for THIS order
+                $this->check_and_attach_order( $order_id, $phone_norm );
+            }
+        }
+    }
+
+    /**
+     * Clear cache for a specific phone number.
+     */
+    public function clear_phone_cache( string $phone ): void {
+        global $wpdb;
+        $table = $wpdb->prefix . 'steadfast_fraud_cache';
+        $wpdb->delete( $table, [ 'phone' => $phone ], [ '%s' ] );
+    }
 
     /* ------------------------------------------------------------------ */
     /*  Public Methods                                                      */
@@ -43,30 +76,48 @@ class SFC_Checker {
      * }
      */
     public function check( string $phone, bool $force_refresh = false ): array {
-        $phone = SFC_API::normalize_phone( $phone );
+        $phone_norm = SFC_API::normalize_phone( $phone );
 
-        if ( strlen( $phone ) !== 11 ) {
-            return $this->error_result( sprintf( __( 'Invalid phone number (found %d digits, need 11).', 'steadfast-fraud-check' ), strlen( $phone ) ) );
+        if ( strlen( $phone_norm ) !== 11 ) {
+            return $this->error_result( sprintf( __( 'Invalid phone number (found %d digits, need 11).', 'steadfast-fraud-check' ), strlen( $phone_norm ) ) );
         }
 
-        // Try cache first
+        $api_data = null;
+        $from_cache = false;
+
+        // 1. Try cache for API history
         if ( ! $force_refresh ) {
-            $cached = $this->get_cache( $phone );
-            if ( $cached ) {
-                $cached['from_cache'] = true;
-                return $cached;
+            $cached = $this->get_cache( $phone_norm );
+            if ( $cached && ! empty( $cached['raw'] ) ) {
+                $api_data   = $cached['raw'];
+                $from_cache = true;
+                
+                // If it's a cached 'unknown' (0 parcels), maybe it's worth re-checking the API 
+                // if it's been a while, but for now we follow the cache hours.
             }
         }
 
-        $api    = SFC_API::instance();
-        $result = $api->fraud_check( $phone );
+        // 2. Fetch fresh API data if needed
+        if ( null === $api_data ) {
+            $api      = SFC_API::instance();
+            $response = $api->fraud_check( $phone_norm );
 
-        if ( is_wp_error( $result ) ) {
-            return $this->error_result( $result->get_error_message() );
+            if ( is_wp_error( $response ) ) {
+                // If API fails (rate limit etc), we don't return error immediately,
+                // we proceed with 0 API stats so local history can still be shown.
+                $api_data = [ 'total_parcel' => 0, 'total_delivered' => 0, 'total_returned' => 0, 'total_cancelled' => 0 ];
+            } else {
+                $api_data = $response;
+            }
         }
 
-        $processed = $this->process_result( $result );
-        $this->save_cache( $phone, $processed );
+        // 3. Process results with ALWAYS FRESH local history
+        // This ensures returning customers are detected even if API data is cached/empty.
+        $processed = $this->process_result( $api_data, $phone_norm );
+        $processed['from_cache'] = $from_cache;
+
+        // 4. Update cache with combined data
+        $this->save_cache( $phone_norm, $processed );
 
         return $processed;
     }
@@ -113,30 +164,26 @@ class SFC_Checker {
     /* ------------------------------------------------------------------ */
 
     /**
-     * Calculate a risk score (0–100) from the Steadfast fraud_check response.
-     *
-     * The Steadfast API returns something like:
-     * {
-     *   "status": 200,
-     *   "data": {
-     *     "total_parcel":   120,
-     *     "total_delivered": 80,
-     *     "total_returned":  30,
-     *     "total_cancelled": 10
-     *   }
-     * }
-     *
-     * Score formula:
-     *   - Base score from (returned + cancelled) / total × 100
-     *   - If total parcels < 5  → treat as unknown (score 0, risk unknown)
+     * Calculate a risk score (0–100) from API response and local history.
      */
-    private function process_result( array $raw ): array {
-        $data = $raw['data'] ?? $raw; // Some responses nest under 'data'
+    private function process_result( array $raw, string $phone = '' ): array {
+        $data = $raw['data'] ?? $raw;
 
         $total     = (int) ( $data['total_parcel']   ?? 0 );
         $delivered = (int) ( $data['total_delivered'] ?? 0 );
         $returned  = (int) ( $data['total_returned']  ?? 0 );
         $cancelled = (int) ( $data['total_cancelled'] ?? 0 );
+
+        // Local Stats Analysis
+        $local_total = 0;
+        if ( ! empty( $phone ) ) {
+            $local = $this->get_local_history_stats( $phone );
+            $total     += $local['total'];
+            $delivered += $local['success'];
+            $cancelled += $local['failed'];
+            $local_total = $local['total'];
+        }
+
         $delivery_rate = $total > 0 ? round( ( $delivered / $total ) * 100, 1 ) : 0;
 
         $summary = sprintf(
@@ -149,11 +196,15 @@ class SFC_Checker {
             $delivery_rate
         );
 
+        if ( $local_total > 0 ) {
+            $summary .= ' ' . sprintf( __( '(Includes %d local orders)', 'steadfast-fraud-check' ), $local_total );
+        }
+
         // Score formula: (returned + cancelled) / total
         $bad_rate = $total > 0 ? ( $returned + $cancelled ) / $total : 0;
         $score    = (int) round( $bad_rate * 100 );
 
-        // Determine Risk Level (Matching Portal optimism)
+        // Determine Risk Level
         if ( $total === 0 ) {
             $risk_level = 'unknown';
         } else {
@@ -168,8 +219,8 @@ class SFC_Checker {
                 $risk_level = 'safe';
             }
 
-            // If it's a very low history but 100% success, mark as safe
-            if ( $score === 0 && $total > 0 && $total < 5 ) {
+            // Forced Safety: If they have local historical success, they are probably safe.
+            if ( $score === 0 && $total > 0 ) {
                 $risk_level = 'safe';
             }
         }
@@ -190,6 +241,58 @@ class SFC_Checker {
             ],
             'from_cache' => false,
             'error'      => '',
+        ];
+    }
+
+    /**
+     * Get order stats for a phone number from the current WooCommerce database.
+     * Uses multiple phone formats to maximize hit rate.
+     */
+    private function get_local_history_stats( string $phone ): array {
+        $phone_norm = preg_replace( '/\D/', '', $phone );
+        
+        // Search for variants: 017..., +88017..., 88017..., etc.
+        $variants = [
+            $phone_norm,
+            '0' . ltrim( $phone_norm, '0' ),
+            '+88' . ltrim( $phone_norm, '0' ),
+            '88' . ltrim( $phone_norm, '0' ),
+        ];
+        $variants = array_unique( array_filter( $variants ) );
+        
+        $all_order_ids = [];
+        foreach ( $variants as $v ) {
+            $order_ids = wc_get_orders( [
+                'billing_phone' => $v,
+                'limit'         => -1,
+                'status'        => 'any', // DO NOT omit this, we need all history
+                'return'        => 'ids',
+            ] );
+            if ( ! empty( $order_ids ) ) {
+                $all_order_ids = array_merge( $all_order_ids, $order_ids );
+            }
+        }
+        $all_order_ids = array_unique( $all_order_ids );
+        
+        $success = 0;
+        $failed  = 0;
+        
+        foreach ( $all_order_ids as $order_id ) {
+            $order = wc_get_order( $order_id );
+            if ( ! $order ) continue;
+            
+            $status = $order->get_status();
+            if ( in_array( $status, [ 'completed', 'processing' ] ) ) {
+                $success++;
+            } elseif ( in_array( $status, [ 'cancelled', 'failed', 'returned' ] ) ) {
+                $failed++;
+            }
+        }
+        
+        return [
+            'total'   => $success + $failed,
+            'success' => $success,
+            'failed'  => $failed,
         ];
     }
 
