@@ -246,33 +246,34 @@ class SFC_Checker {
 
     /**
      * Get order stats for a phone number from the current WooCommerce database.
-     * Uses multiple phone formats to maximize hit rate.
+     * Uses meta_query for maximum compatibility with both HPOS and Legacy storage.
      */
     private function get_local_history_stats( string $phone ): array {
         $phone_norm = preg_replace( '/\D/', '', $phone );
         
-        // Search for variants: 017..., +88017..., 88017..., etc.
+        // Search for variants to catch all previous orders
         $variants = [
             $phone_norm,
             '0' . ltrim( $phone_norm, '0' ),
-            '+88' . ltrim( $phone_norm, '0' ),
-            '88' . ltrim( $phone_norm, '0' ),
+            '880' . ltrim( $phone_norm, '0' ),
+            '+880' . ltrim( $phone_norm, '0' ),
         ];
         $variants = array_unique( array_filter( $variants ) );
         
-        $all_order_ids = [];
-        foreach ( $variants as $v ) {
-            $order_ids = wc_get_orders( [
-                'billing_phone' => $v,
-                'limit'         => -1,
-                'status'        => 'any', // DO NOT omit this, we need all history
-                'return'        => 'ids',
-            ] );
-            if ( ! empty( $order_ids ) ) {
-                $all_order_ids = array_merge( $all_order_ids, $order_ids );
-            }
-        }
-        $all_order_ids = array_unique( $all_order_ids );
+        $args = [
+            'limit'      => -1,
+            'status'     => 'any',
+            'return'     => 'ids',
+            'meta_query' => [
+                [
+                    'key'     => '_billing_phone',
+                    'value'   => $variants,
+                    'compare' => 'IN',
+                ],
+            ],
+        ];
+
+        $all_order_ids = wc_get_orders( $args );
         
         $success = 0;
         $failed  = 0;
@@ -282,9 +283,12 @@ class SFC_Checker {
             if ( ! $order ) continue;
             
             $status = $order->get_status();
-            if ( in_array( $status, [ 'completed', 'processing' ] ) ) {
+            // Count successful delivery indicators
+            if ( in_array( $status, [ 'completed', 'processing' ], true ) ) {
                 $success++;
-            } elseif ( in_array( $status, [ 'cancelled', 'failed', 'returned' ] ) ) {
+            } 
+            // Count returns or cancels as risk signals
+            elseif ( in_array( $status, [ 'cancelled', 'failed', 'returned', 'refunded' ], true ) ) {
                 $failed++;
             }
         }

@@ -90,7 +90,6 @@ class SFC_API {
             CURLOPT_HTTPHEADER     => $headers,
             CURLOPT_SSL_VERIFYPEER => false,
             CURLOPT_USERAGENT      => 'Steadfast-WooCommerce-Plugin/1.0',
-            CURLOPT_IPRESOLVE      => CURL_IPRESOLVE_V4, // Helps on some local environments
         ];
 
         if ( 'POST' === $method ) {
