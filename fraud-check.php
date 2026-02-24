@@ -1,11 +1,11 @@
 <?php
 /**
- * Plugin Name:       Steadfast Fraud Check for WooCommerce
- * Plugin URI:        https://github.com/your-repo/steadfast-fraud-check
- * Description:       Automatically checks customer fraud risk using the Steadfast Courier API during WooCommerce checkout & order management. Flags high-risk orders based on COD delivery history.
+ * Plugin Name:      Fraud Check for WooCommerce
+ * Plugin URI:       https://techsoulbd.com/
+ * Description:       Automatically checks customer fraud risk  WooCommerce checkout & order management. Flags high-risk orders based on COD delivery history.
  * Version:           1.0.0
- * Author:            TS Dev
- * Author URI:        #
+ * Author:            Techsoulbd
+ * Author URI:        https://techsoulbd.com/
  * License:           GPL v2 or later
  * License URI:       https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain:       steadfast-fraud-check
