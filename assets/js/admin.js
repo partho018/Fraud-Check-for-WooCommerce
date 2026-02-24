@@ -351,6 +351,46 @@
       });
   });
 
+  $(document).on("click", ".sfc-order-refresh-btn", function (e) {
+    e.preventDefault();
+    var $btn = $(this);
+    var orderId = $btn.data("order-id");
+    var $container = $("#sfc-risk-container-" + orderId);
+
+    $btn.addClass("sfc-spin-icon");
+
+    $.post(SFC.ajaxurl, {
+      action: "sfc_order_check",
+      nonce: SFC.nonce,
+      order_id: orderId,
+      force: "true",
+    })
+      .done(function (res) {
+        if (res.success) {
+          var data = res.data;
+          var level = data.risk_level || "unknown";
+          var score = data.score || 0;
+          
+          // Update the badge
+          var badgeHTML = '<span class="sfc-badge sfc-badge--' + level + '" title="Refreshed: ' + score + '/100">';
+          
+          var icon = level === 'safe' ? '✅' : (level === 'high' ? '🚫' : (level === 'medium' ? '⚠️' : '❓'));
+          var label = level.charAt(0).toUpperCase() + level.slice(1);
+          
+          badgeHTML += icon + ' ' + label + '</span>';
+          
+          $container.find('.sfc-badge').replaceWith(badgeHTML);
+          
+          // Flash success
+          $btn.css('color', '#10b981');
+          setTimeout(function() { $btn.css('color', ''); }, 2000);
+        }
+      })
+      .always(function () {
+        $btn.removeClass("sfc-spin-icon");
+      });
+  });
+
   function showFraudModal(data, orderId) {
     var level = data.risk_level || "unknown";
     var stats = data.stats || {};
